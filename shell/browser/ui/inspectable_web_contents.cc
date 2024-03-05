@@ -300,11 +300,6 @@ class InspectableWebContents::NetworkResourceLoader
   base::TimeDelta retry_delay_;
 };
 
-// Implemented separately on each platform.
-InspectableWebContentsView* CreateInspectableContentsView(
-    InspectableWebContents* inspectable_web_contents);
-
-// static
 // static
 void InspectableWebContents::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(kDevToolsBoundsPref,
@@ -320,7 +315,7 @@ InspectableWebContents::InspectableWebContents(
     : pref_service_(pref_service),
       web_contents_(std::move(web_contents)),
       is_guest_(is_guest),
-      view_(CreateInspectableContentsView(this)) {
+      view_(new InspectableWebContentsView(this)) {
   const base::Value* bounds_dict =
       &pref_service_->GetValue(kDevToolsBoundsPref);
   if (bounds_dict->is_dict()) {
@@ -382,10 +377,6 @@ void InspectableWebContents::SetDelegate(
 
 InspectableWebContentsDelegate* InspectableWebContents::GetDelegate() const {
   return delegate_;
-}
-
-bool InspectableWebContents::IsGuest() const {
-  return is_guest_;
 }
 
 void InspectableWebContents::ReleaseWebContents() {
@@ -454,7 +445,7 @@ void InspectableWebContents::CloseDevTools() {
       managed_devtools_web_contents_.reset();
     }
     embedder_message_dispatcher_.reset();
-    if (!IsGuest())
+    if (!is_guest())
       web_contents_->Focus();
   }
 }
@@ -514,10 +505,6 @@ void InspectableWebContents::CallClientFunction(
   GetDevToolsWebContents()->GetPrimaryMainFrame()->ExecuteJavaScriptMethod(
       base::ASCIIToUTF16(object_name), base::ASCIIToUTF16(method_name),
       std::move(arguments), std::move(cb));
-}
-
-gfx::Rect InspectableWebContents::GetDevToolsBounds() const {
-  return devtools_bounds_;
 }
 
 void InspectableWebContents::SaveDevToolsBounds(const gfx::Rect& bounds) {
@@ -727,6 +714,12 @@ void InspectableWebContents::SetIsDocked(DispatchCallback callback,
 void InspectableWebContents::OpenInNewTab(const std::string& url) {
   if (delegate_)
     delegate_->DevToolsOpenInNewTab(url);
+}
+
+void InspectableWebContents::OpenSearchResultsInNewTab(
+    const std::string& query) {
+  if (delegate_)
+    delegate_->DevToolsOpenSearchResultsInNewTab(query);
 }
 
 void InspectableWebContents::ShowItemInFolder(

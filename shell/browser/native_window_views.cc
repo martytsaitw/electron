@@ -28,7 +28,7 @@
 #include "content/public/browser/desktop_media_id.h"
 #include "shell/browser/api/electron_api_web_contents.h"
 #include "shell/browser/ui/inspectable_web_contents.h"
-#include "shell/browser/ui/views/inspectable_web_contents_view_views.h"
+#include "shell/browser/ui/inspectable_web_contents_view.h"
 #include "shell/browser/ui/views/root_view.h"
 #include "shell/browser/web_contents_preferences.h"
 #include "shell/browser/web_view_manager.h"
@@ -474,7 +474,7 @@ void NativeWindowViews::SetContentView(views::View* view) {
   set_content_view(view);
   focused_view_ = view;
   root_view_.AddChildView(content_view());
-  root_view_.Layout();
+  root_view_.DeprecatedLayoutImmediately();
 }
 
 void NativeWindowViews::Close() {
