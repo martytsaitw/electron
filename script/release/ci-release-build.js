@@ -10,10 +10,11 @@ const octokit = new Octokit({
 
 const BUILD_APPVEYOR_URL = 'https://ci.appveyor.com/api/builds';
 const CIRCLECI_PIPELINE_URL = 'https://circleci.com/api/v2/project/gh/electron/electron/pipeline';
-// const GH_ACTIONS_PIPELINE_URL = 'https://github.com/electron/electron/actions';
+const GH_ACTIONS_PIPELINE_URL = 'https://github.com/electron/electron/actions';
 const GH_ACTIONS_API_URL = '/repos/electron/electron/actions';
 
 const CIRCLECI_WAIT_TIME = process.env.CIRCLECI_WAIT_TIME || 30000;
+const GH_ACTIONS_WAIT_TIME = process.env.GH_ACTIONS_WAIT_TIME || 30000;
 
 const appVeyorJobs = {
   'electron-x64': 'electron-x64-release',
@@ -88,7 +89,17 @@ async function githubActionsCall (targetBranch, workflowName, options) {
 
   jobRequestedCount++;
   try {
-    const ghActionsResponse = await octokit.request(`POST ${GH_ACTIONS_API_URL}/workflows/${workflowName}.yml/dispatches`, {
+    const commits = await octokit.repos.listCommits({
+      owner: 'electron',
+      repo: 'electron',
+      sha: targetBranch,
+      per_page: 5
+    });
+    if (!commits.data.length) {
+      console.error('Could not fetch most recent commits for GitHub Actions, returning early');
+    }
+
+    await octokit.request(`POST ${GH_ACTIONS_API_URL}/workflows/${workflowName}.yml/dispatches`, {
       ref: buildRequest.branch,
       inputs: {
         ...buildRequest.parameters
@@ -97,19 +108,21 @@ async function githubActionsCall (targetBranch, workflowName, options) {
         'X-GitHub-Api-Version': '2022-11-28'
       }
     });
-    console.log(`GitHub Actions release build pipeline ${ghActionsResponse.id} for ${workflowName} triggered.`);
-    // const workFlowUrl = `${GH_ACTIONS_PIPELINE_URL}/runs/${workflowId}`;
-    // if (options.runningPublishWorkflows) {
-    //   console.log(`GitHub Actions release workflow request for ${workflowName} successful.  Check ${workFlowUrl} for status.`);
-    // } else {
-    //   console.log(`GitHub Actions release build workflow running at ${GH_ACTIONS_PIPELINE_URL}/runs/${workflowId} for ${workflowName}.`);
-    // const jobNumber = await getCircleCIJobNumber(workflowId);
-    // if (jobNumber === -1) {
-    //   return;
-    // }
-    // const jobUrl = `https://github.com/electron/electron/actions/runs/${workflowId}/job/${jobNumber}`;
-    // console.log(`GitHub Actions release build request for ${workflowName} successful.  Check ${jobUrl} for status.`);
-    // }
+
+    const runNumber = await getGitHubActionsRun(workflowName, commits.data[0].sha);
+    if (runNumber === -1) {
+      return;
+    }
+
+    console.log(`GitHub Actions release build pipeline ${runNumber} for ${workflowName} triggered.`);
+    const runUrl = `${GH_ACTIONS_PIPELINE_URL}/runs/${runNumber}`;
+
+    if (options.runningPublishWorkflows) {
+      console.log(`GitHub Actions release workflow request for ${workflowName} successful.  Check ${runUrl} for status.`);
+    } else {
+      console.log(`GitHub Actions release build workflow running at ${GH_ACTIONS_PIPELINE_URL}/runs/${runNumber} for ${workflowName}.`);
+      console.log(`GitHub Actions release build request for ${workflowName} successful.  Check ${runUrl} for status.`);
+    }
   } catch (err) {
     console.log('Error calling GitHub Actions: ', err);
   }
@@ -227,6 +240,59 @@ async function getCircleCIJobNumber (workflowId) {
     await new Promise(resolve => setTimeout(resolve, CIRCLECI_WAIT_TIME));
   }
   return jobNumber;
+}
+
+async function getGitHubActionsRun (workflowId, headCommit) {
+  let runNumber = 0;
+  let actionRun;
+  while (runNumber === 0) {
+    const actionsRuns = await octokit.request(`GET ${GH_ACTIONS_API_URL}/workflows/${workflowId}.yml/runs`, {
+      headers: {
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+    if (!actionsRuns.data.workflow_runs.length) {
+      console.log(`No current workflow_runs found for ${workflowId}, response was: ${actionsRuns.data.workflow_runs}`);
+      runNumber = -1;
+      break;
+    }
+
+    for (const run of actionsRuns.data.workflow_runs) {
+      if (run.head_sha === headCommit) {
+        console.log(`GitHub Actions run ${run.html_url} found for ${headCommit}, waiting on status.`);
+        actionRun = run;
+        break;
+      }
+    }
+
+    if (actionRun) {
+      switch (actionRun.status) {
+        case 'in_progress':
+        case 'pending':
+        case 'queued':
+        case 'requested':
+        case 'waiting': {
+          if (actionRun.id && !isNaN(actionRun.id)) {
+            console.log(`GitHub Actions run ${actionRun.status} for ${actionRun.html_url}.`);
+            runNumber = actionRun.id;
+          }
+          break;
+        }
+        case 'action_required':
+        case 'cancelled':
+        case 'failure':
+        case 'skipped':
+        case 'timed_out':
+        case 'failed': {
+          console.log(`Error workflow run returned a status of ${actionRun.status} for ${actionRun.html_url}`);
+          runNumber = -1;
+          break;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, GH_ACTIONS_WAIT_TIME));
+    }
+  }
+  return runNumber;
 }
 
 async function circleCIRequest (url, method, requestBody) {
